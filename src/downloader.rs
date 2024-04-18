@@ -1,5 +1,5 @@
 
-use std::{iter::zip, path::PathBuf};
+use std::{any::Any, iter::zip, path::PathBuf};
 
 use reqwest::{self, Client, Response, Url, Error};
 use polars::{error::PolarsResult, frame::DataFrame};
@@ -37,12 +37,6 @@ impl DownloadPDF {
         tokio::fs::write(fd, &content).await?;        
         Ok(())
     }
-
-    // pub async fn download(&self, downloader: &Downloader, target_url: Url) -> Result<()>{
-        
-    //     downloader.download_pdf(self.filename.clone(), target_url).await?;
-    //     Ok(())
-    // }
 }
 
 #[derive(Debug, Clone)]
@@ -53,6 +47,7 @@ pub enum AvailableUrls {
     //Neither    
 }
 
+#[derive(Debug)]
 pub struct Downloader {
     client: Client,
     dataframe: DataFrame,
@@ -128,15 +123,6 @@ impl Downloader {
                     (Some(f), Err(_), std_Ok(a)) => Some(
                         DownloadPDF::new(f, AvailableUrls::Alt { url: a })
                     ),
-                    
-
-                    // (Some(f), Some(u), Some(a)) => {
-                    //     let parsed_url = Url::parse(u);
-                    //     match parsed_url {
-                    //         std_Ok(pu) => Some((f, pu)),
-                    //         Err(e) => None
-                    //     }
-                    // },
                     _ => None
                 }
             })
@@ -150,7 +136,7 @@ impl Downloader {
             .collect();
         for (d, f) in downloads {
             match f.await {
-                std_Ok(_) => println!("{}, primary url successful", &d.filename),
+                std_Ok(_) => println!("{}, {:?} url successful", &d.filename, d.urls ),
                 Err(e) => match d.urls {
                     AvailableUrls::Both { primary, alt } => {
                         let alt_d = self.download_pdf(d.filename.clone(), alt.clone()).await;
