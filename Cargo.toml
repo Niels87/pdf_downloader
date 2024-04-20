@@ -9,6 +9,14 @@ edition = "2021"
 #anyhow = "1.0.82"
 calamine = "0.24.0"
 color-eyre = { version = "0.6.3", features = ["url", "issue-url"] }
+eframe = { version = "0.27.2", features = ["serde", "persistence"] }
+#egui = "0.27.2"
+egui-file-dialog = "0.5.0"
+futures-util = "0.3.30"
+itertools = "0.12.1"
+#indicatif = "0.17.8"
 polars = "0.39.0"
-reqwest = { version = "0.12.3", features = ["blocking"]}
+reqwest = { version = "0.12.3", features = ["stream"] }
+serde = "1.0.198"
 tokio = { version = "1.37.0", features = ["full"]}
+

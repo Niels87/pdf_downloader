@@ -1,4 +1,7 @@
-use color_eyre::eyre::Result;
+#![warn(clippy::all, rust_2018_idioms)]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
+
+use color_eyre::{eyre::Result, owo_colors::OwoColorize};
 use std::{error::Error, fs::File, io::{copy, Write}, path};
 use downloader::get_urls_from_dataframe;
 use reqwest::Client;
@@ -6,78 +9,63 @@ use tokio::*;
 mod xlsx_reader;
 use xlsx_reader::*;
 mod downloader;
-//use anyhow::Result;
+mod app;
+use app::*;
+use color_eyre::install;
+use eframe::egui::{self, viewport};
 
-static APP_USER_AGENT: &str = concat!(
-    env!("CARGO_PKG_NAME"),
-    "/",
-    env!("CARGO_PKG_VERSION"),
-);
+// #[tokio::main]
+// async fn main() -> Result<()> {
+//     color_eyre::install()?;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+//     let file_path = "C:/Users/KOM/dev/rust/pdf_downloader/data/test_file_short.xlsx";
+
+//     let df = read_xlsx(file_path)?;
+
+//     let client_builder = Client::builder();
+//     let client = client_builder
+//         .user_agent(APP_USER_AGENT)
+//         .build()?;
+
+//     let downloader = downloader::Downloader::new(
+//         client, 
+//         df, 
+//         "C:/Users/KOM/dev/rust/pdf_downloader/data/downloaded_files/"
+//     );
+
+//     downloader.download_all().await?;
+
+
+
+//     Ok(())
+
+// }
+
+
+use eframe;
+
+use app::DownloaderApp;
+
+fn main() -> Result<()> {
     color_eyre::install()?;
+    
 
-    let file_path = "C:/Users/KOM/dev/rust/pdf_downloader/data/test_file_short.xlsx";
+    let native_options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default(),
+        centered: true,
+        // .with_icon(
+        //     // NOTE: Adding an icon is optional
+        //     eframe::icon_data::from_png_bytes(&include_bytes!("../assets/icon-256.png")[..])
+        //         .unwrap(),
+        // ),
+    ..Default::default()
+    };
+        
 
-    let df = read_xlsx(file_path)?;
-
-    let client_builder = Client::builder();
-    let client = client_builder
-        .user_agent(APP_USER_AGENT)
-        .build()?;
-
-    let downloader = downloader::Downloader::new(
-        client, 
-        df, 
-        "C:/Users/KOM/dev/rust/pdf_downloader/data/downloaded_files/"
-    );
-
-    downloader.download_all().await?;
-
-
-    //downloader.download_n(4).await?;
-
+    let _ = eframe::run_native(
+        "Downloader Application", 
+        native_options,
+        Box::new(|cc| Box::new(DownloaderApp::new(cc)))
+    );   
     Ok(())
-
 }
-    // // let res = downloader::download_pdf("https://www.rust-lang.org/logos/rust-logo-512x512.png");
-    // // let response = res.unwrap();
-    // let target = "https://www.abancacorporacionbancaria.com/files/documents/memoria-anual-rsc-2016-es.pdf";
-    // let response = reqwest::get(target).await?;
-
-
-
-    // // let headers = response.headers().clone();
-    // // for h in headers {
-    // //     println!("{:?}", h);
-    // // }
-
-    // let mut dest = File::create("C:/Users/KOM/dev/rust/pdf_downloader/data/test.pdf")?;
-    // let content = response.bytes().await?;
-    // dest.write_all(&content)?;
-
-    // Ok(())
-
-
-
-    // match &res {
-    //     Ok(r) => {
-    //         println!("{:?}", r);
-    //         let mut headers = r.headers().clone();
-    //         for h in headers.drain() {
-                
-    //             match h.0 {
-    //                 Some(hn) => println!("{}: {:?}", hn, h.1),
-    //                 None => println!("{:?}", h)
-    //             }
-    //         }
-    //     },
-    //     Err(e) => println!("{}", e)
-    // }
-    // let response = res.unwrap();
-    // let url = response.url();
-    // let path = url.path();
-    
-
-    
