@@ -17,7 +17,7 @@ use crate::xlsx_reader::read_xlsx;
 use egui_file_dialog::*;
 use egui::ProgressBar;
 use std::sync::{Arc, Mutex};
-
+use crate::log_writer::*;
 
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
@@ -31,6 +31,7 @@ pub struct DownloaderApp {
     file_name_column: Option<String>,
     xlsx_file: Option<PathBuf>,
     output_folder: Option<PathBuf>,
+    //log_file: String,
     ui: AppUI,
     active_downloads: Vec<JoinHandle<Result<String, Report>>>
 }
@@ -54,7 +55,8 @@ pub struct DownloaderApp {
 
 pub struct AppUI {
     choose_xlsx: FileDialog,
-    choose_folder: FileDialog,
+    choose_output_folder: FileDialog,
+    //choose_logfile: FileDialog,
     progress_bars: Option<HashMap<String, ProgressBar>>,
 }
 
@@ -62,7 +64,8 @@ impl Default for AppUI {
     fn default() -> Self {
         AppUI { 
             choose_xlsx: FileDialog::new(), 
-            choose_folder: FileDialog::new(),
+            choose_output_folder: FileDialog::new(),
+            //choose_logfile: FileDialog::new(),
             progress_bars: None,
         }
     }
@@ -98,16 +101,12 @@ impl DownloaderApp {
             file_name_column: Some("BRnum".to_string()),
             xlsx_file: Some(PathBuf::from("C:/Users/KOM/dev/rust/pdf_downloader/data/test_file_short.xlsx")),
             output_folder: Some(PathBuf::from("C:/Users/KOM/dev/rust/pdf_downloader/data/downloaded_files/")),
+            //log_file: "download_log.csv".to_string(),
             ui: AppUI::default(),
             active_downloads: Vec::new(),
         };
         app
     }
-
-    // pub fn on_xlsx_file_input_entered(&mut self) {
-    //     self.xlsx_file = Some(PathBuf::from(&self.text_inputs.xlsx_file_status));
-        
-    // }
 
     pub fn on_build_downloader_button_clicked(&mut self) -> Result<()> {
         self.downloader = Some(build_downloader(
@@ -129,37 +128,14 @@ impl DownloaderApp {
 
     pub fn on_download_all_button_clicked(&mut self) -> Result<()> {
         
-        match &self.downloader {
+        match &mut self.downloader {
             Some(d) => {
-                // let rt = tokio::runtime::Builder::new_multi_thread()
-                // .worker_threads(4)
-                // .enable_all()
-                // .build()
-                // .unwrap();
-                // let _guard = rt.enter();
                 let mut handles = d.download_all()?;
-                // self.active_downloads.append(
-                //     &mut handles
-                // );
-                
-                // std::thread::spawn(
-                //     move || {
-                //         for h in handles {
-                //             let _ = rt.block_on(h);
-                //         }
-                //     }
-                // );
-                
-                //println!("{:?}", dr);
             },
             None => ()
         }
         Ok(())
     }
-
-    // pub fn on_choose_folder_button_clicked(&mut self) {
-    //     self
-    // }
 }
 
 impl eframe::App for DownloaderApp {
@@ -211,12 +187,10 @@ impl eframe::App for DownloaderApp {
                                     .show_percentage()
                                     .fill(Color32::DARK_GRAY)
                             );
-                            
                         }
                     }
                     ctx.request_repaint();
                 }
-
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -225,7 +199,6 @@ impl eframe::App for DownloaderApp {
                     if ui.button("Open file").clicked() {
                         
                         self.ui.choose_xlsx.select_file();
-                        
                     }   
                     if let Some(path) = self.ui.choose_xlsx.update(ctx).selected() {
                         
@@ -242,9 +215,9 @@ impl eframe::App for DownloaderApp {
                 ui.add_space(16.0);
                 ui.vertical(|ui| {
                     if ui.button("Choose folder").clicked() {
-                        self.ui.choose_folder.select_directory()
+                        self.ui.choose_output_folder.select_directory()
                     }
-                    if let Some(path) = self.ui.choose_folder.update(ctx).selected() {
+                    if let Some(path) = self.ui.choose_output_folder.update(ctx).selected() {
                         self.output_folder = Some(path.to_path_buf()); 
                     }
                     ui.label(
@@ -260,7 +233,6 @@ impl eframe::App for DownloaderApp {
             }
             match &self.dataframe {
                 Some(df) => {
-
                     ui.horizontal(|ui| {
                         ui.menu_button("pdf_url_col", |menu_ui| {
                             for cn in df.get_column_names() {

@@ -15,32 +15,15 @@ use std::result::Result::Ok as std_Ok;
 use color_eyre::eyre::*;
 use serde;
 use crate::xlsx_reader::*;
-use futures_util::{Future, StreamExt};
-use std::cell::{RefCell, RefMut};
-use std::rc::Rc;
+use futures_util::{Future, StreamExt, TryFutureExt};
+
 use itertools::{self, multizip, Itertools};
 use tokio::runtime::Builder;
 use std::sync::{Arc, Mutex};
-
+use crate::log_writer::*;
 
 type UrlDb = Arc<Mutex<HashMap<String, (Option<String>, Option<String>)>>>;
 type ProgressDb = Arc<Mutex<HashMap<String, DownloadProgress>>>;
-
-#[derive(Debug, Clone)]
-pub struct DownloadPDF {
-    filename: String,
-    urls: AvailableUrls
-}
-
-
-#[derive(Debug, Clone)]
-pub enum AvailableUrls {
-    Primary{ url: Url },
-    Alt{ url: Url },
-    Both{ primary: Url, alt: Url },
-    //Neither    
-}
-
 
 static APP_USER_AGENT: &str = concat!(
     env!("CARGO_PKG_NAME"),
@@ -55,6 +38,7 @@ pub struct Downloader {
     fnames_with_urls: HashMap<String, (Option<String>, Option<String>)>,
     pub destination_folder: PathBuf,
     pub progress: ProgressDb,
+    log_writer: Option<csv::Writer<File>>,
 }
 
 
@@ -90,11 +74,15 @@ impl Downloader {
             fnames_with_urls,
             destination_folder,
             progress: Arc::new(Mutex::new(HashMap::<String, DownloadProgress>::new())),
+            log_writer: None
             //file_destination: PathBuf::from(file_destination)
         }
     }
 
-    pub fn download_all(&self) -> Result<std::thread::JoinHandle<Vec<Result<Result<String, Report>, JoinError>>>> {
+    pub fn download_all(&self) -> Result<()> {
+        let mut log_writer = build_log_writer(&self.destination_folder, "download_log".to_string())?;
+        
+
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(4)
             .enable_all()
@@ -108,14 +96,17 @@ impl Downloader {
             
             match validated_url {
                 std_Ok(u) => {
-                    dl_tasks.push( 
-                        runtime.spawn(
-                            download_pdf(
-                                self.client.clone(),
-                                fname.clone(),
-                                u.clone(),
-                                self.destination_folder.clone(),
-                                self.progress.clone(),
+                    dl_tasks.push(
+                        (
+                            fname.clone(),
+                            runtime.spawn(
+                                download_pdf(
+                                    self.client.clone(),
+                                    fname.clone(),
+                                    u.clone(),
+                                    self.destination_folder.clone(),
+                                    self.progress.clone(),
+                                )
                             )
                         )
                     );
@@ -126,15 +117,37 @@ impl Downloader {
 
         let blocks = std::thread::spawn(
             move || {
-                let mut task_output = Vec::new();
-                for task in dl_tasks {
-                    task_output.push( runtime.block_on(task) );
+                //let mut task_output = Vec::new();
+                for (fname, task) in dl_tasks {
+                    let block_res = runtime.block_on(task);
+                    if let std_Ok(dl_res) = block_res {
+                        match dl_res {
+                            std_Ok(_) => { 
+                                let _ = log_writer.write_record([fname.clone(), "true".to_string()]); 
+                            },
+                            Err(e) => {
+                                let _ = log_writer.write_record([fname.clone(), "false".to_string()]); 
+                            }
+
+                        }
+                    }
+                    //task_output.push( block_res );
+                    
                 }
-                task_output
+                //task_output
+                let _ = log_writer.flush();
             }
-        );        
-        Ok(blocks)  
+        );
+                
+        Ok(())  
         
+    }
+
+    pub fn set_log_writer(&mut self) -> Result<()> {
+        self.log_writer = Some(
+            build_log_writer(&self.destination_folder, "download_log".to_string())?
+        );
+        Ok(())
     }
 
 
@@ -197,6 +210,7 @@ pub async fn download_pdf(
                 );
         }
     }
+
     Ok(filename)
 }
 
@@ -205,13 +219,8 @@ pub fn build_downloader(dataframe: DataFrame, destination_folder: PathBuf, filen
     let client = client_builder
         .user_agent(APP_USER_AGENT)
         .build()?;
-    //let file_path = "C:/Users/KOM/dev/rust/pdf_downloader/data/test_file_short.xlsx";
-    //let dataframe = read_xlsx(&source_file)?;
-    //let file_destination = "C:/Users/KOM/dev/rust/pdf_downloader/data/downloaded_files/";
-    //let fnames_with_urls = HashMap::<String, Vec<Url>>::new();
     
     let file_names = get_filenames_from_dataframe(&dataframe, &filename_col)?;
-    //let l = url_col_names.len();
     let url_vecs = url_col_names.into_iter().filter_map(
         |col_name| {
             match get_urls_from_dataframe(&dataframe, &col_name) {
@@ -286,6 +295,15 @@ pub fn validate_url(url: Option<String>) -> Result<Url> {
     };
     
     Ok(r)
+}
+
+pub fn build_log_writer(folder: &PathBuf, filename: String) -> Result<csv::Writer<File>> {
+    let mut filepath = folder.clone();
+    filepath.push(&filename);
+    filepath.set_extension("csv");
+
+    let writer = csv::Writer::from_path(filepath)?;
+    Ok(writer)
 }
 
     // pub async fn download_all(&self) -> Result<()> {
