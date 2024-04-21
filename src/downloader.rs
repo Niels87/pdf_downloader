@@ -1,9 +1,9 @@
-
+use chrono::{DateTime, Utc};
 use std::fmt::Debug;
 use std::fs::File;
 use std::io::Write;
 use std::{any::Any, collections::HashMap, fs, iter::zip, path::PathBuf};
-
+use std::time::*;
 use polars::datatypes::{ArrayCollectIterExt, Field};
 use reqwest::{self, Client, Response, Url, Error};
 use polars::{error::PolarsResult, frame::DataFrame};
@@ -20,7 +20,7 @@ use futures_util::{Future, StreamExt, TryFutureExt};
 use itertools::{self, multizip, Itertools};
 use tokio::runtime::Builder;
 use std::sync::{Arc, Mutex};
-use crate::log_writer::*;
+
 
 type UrlDb = Arc<Mutex<HashMap<String, (Option<String>, Option<String>)>>>;
 type ProgressDb = Arc<Mutex<HashMap<String, DownloadProgress>>>;
@@ -39,6 +39,7 @@ pub struct Downloader {
     pub destination_folder: PathBuf,
     pub progress: ProgressDb,
     log_writer: Option<csv::Writer<File>>,
+    pub status: AppStatus,
 }
 
 
@@ -74,14 +75,18 @@ impl Downloader {
             fnames_with_urls,
             destination_folder,
             progress: Arc::new(Mutex::new(HashMap::<String, DownloadProgress>::new())),
-            log_writer: None
+            log_writer: None,
+            status: AppStatus::NotStarted,
             //file_destination: PathBuf::from(file_destination)
         }
     }
 
-    pub fn download_all(&self) -> Result<()> {
+    pub fn download_all(&mut self) -> Result<()> {
+        self.status = AppStatus::Downloading;
         let mut log_writer = build_log_writer(&self.destination_folder, "download_log".to_string())?;
-        
+        let client = self.client.clone();
+        let destination_folder = self.destination_folder.clone();
+        let progress = self.progress.clone();
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(4)
@@ -99,13 +104,14 @@ impl Downloader {
                     dl_tasks.push(
                         (
                             fname.clone(),
+                            urls.1.clone(),
                             runtime.spawn(
                                 download_pdf(
-                                    self.client.clone(),
+                                    client.clone(),
                                     fname.clone(),
                                     u.clone(),
-                                    self.destination_folder.clone(),
-                                    self.progress.clone(),
+                                    destination_folder.clone(),
+                                    progress.clone(),
                                 )
                             )
                         )
@@ -114,41 +120,142 @@ impl Downloader {
                 Err(_) => ()
             }
         }
-
-        let blocks = std::thread::spawn(
+        let thread = std::thread::spawn(
             move || {
-                //let mut task_output = Vec::new();
-                for (fname, task) in dl_tasks {
+                let mut alt_url_downloads = Vec::new();
+                for (fname, alt_url, task) in dl_tasks {
                     let block_res = runtime.block_on(task);
-                    if let std_Ok(dl_res) = block_res {
-                        match dl_res {
-                            std_Ok(_) => { 
-                                let _ = log_writer.write_record([fname.clone(), "true".to_string()]); 
-                            },
-                            Err(e) => {
-                                let _ = log_writer.write_record([fname.clone(), "false".to_string()]); 
+                    let success = match block_res {
+                        std_Ok(dl_res) => { 
+                            match dl_res {
+                                std_Ok(_) => {
+                                    let _ = log_writer.write_record([fname.clone(), "true".to_string(), "primary url".to_string()]);
+                                    true
+                                },
+                                Err(_) => {
+                                    //log_writer.write_record([fname.clone(), "false".to_string(), "primary url".to_string()]);
+                                    false
+                                },
                             }
+                        },
+                        Err(_) => {
+                            //log_writer.write_record([fname.clone(), "false".to_string(), "primary url".to_string()]);
+                            false
+                        }
+                    };
+                    if !success {
+                        alt_url_downloads.push((fname,alt_url));
+                    }
+                }
+                //let _ = log_writer.flush();
 
+                let mut alt_dl_tasks = Vec::new();
+                for (fname, url) in alt_url_downloads {
+                    match validate_url(url.clone()) {
+                        std_Ok(url) => {
+                            alt_dl_tasks.push(
+                                (
+                                    fname.clone(),
+                                    runtime.spawn(
+                                        download_pdf(
+                                            client.clone(),
+                                            fname.clone(),
+                                            url.clone(),
+                                            destination_folder.clone(),
+                                            progress.clone(),
+                                        )
+                                    )
+                                )
+                            );
+                        },
+                        Err(_) => {
+                            let _ = log_writer.write_record([fname.clone(), "false".to_string(), "none".to_string()]);
                         }
                     }
-                    //task_output.push( block_res );
-                    
                 }
-                //task_output
-                let _ = log_writer.flush();
-            }
-        );
+                for (fname, task) in alt_dl_tasks {
+                    let alt_block_res = runtime.block_on(task);
+                    match alt_block_res {
+                        std_Ok(r) => {
+                            match r {
+                                std_Ok(_) => {
+                                    let _ = log_writer.write_record([fname.clone(), "true".to_string(), "alt url".to_string()]);
+                                }
+                                Err(_) => {
+                                    let _ = log_writer.write_record([fname.clone(), "false".to_string(), "none".to_string()]);
+                                }
+                            }
+                        },
+                        Err(_) => {
+                            let _ = log_writer.write_record([fname.clone(), "false".to_string(), "none".to_string()]);
+                        }
+                    }
+                }
                 
+                match log_writer.flush() {
+                    Err(e) => println!("{}", e),
+                    std_Ok(_) => println!("flushed ok")
+                }
+
+                
+                //(alt_url_downloads, log_writer, runtime, client)
+            }
+            
+        );       
+        // let (alt_url_downloads, mut log_writer, runtime, client) = thread.join().unwrap();
+        // let mut alt_dl_tasks = Vec::new();
+        // for (fname, url) in alt_url_downloads {
+        //     match validate_url(url.clone()) {
+        //         std_Ok(url) => {
+        //             alt_dl_tasks.push(
+        //                 (
+        //                     fname.clone(),
+        //                     runtime.spawn(
+        //                         download_pdf(
+        //                             client.clone(),
+        //                             fname.clone(),
+        //                             url.clone(),
+        //                             destination_folder.clone(),
+        //                             progress.clone(),
+        //                         )
+        //                     )
+        //                 )
+        //             );
+        //         },
+        //         Err(_) => {
+        //             let _ = log_writer.write_record([fname.clone(), "false".to_string(), "none".to_string()]);
+        //         }
+        //     }
+        // }
+
+
+        // let _ = std::thread::spawn(
+        //     move || {
+        //         for (fname, task) in alt_dl_tasks {
+        //             let alt_block_res = runtime.block_on(task);
+        //             match alt_block_res {
+        //                 std_Ok(_) => {
+        //                     let _ =log_writer.write_record([fname.clone(), "true".to_string(), "alt url".to_string()]);
+        //                 }
+        //                 Err(_) => {
+        //                     let _ = log_writer.write_record([fname.clone(), "false".to_string(), "none".to_string()]);
+        //                 }
+        //             }
+        //         }
+        //         let _ = log_writer.flush();    
+        //     }
+        // );
+        self.status = AppStatus::Finished;
         Ok(())  
         
     }
 
-    pub fn set_log_writer(&mut self) -> Result<()> {
-        self.log_writer = Some(
-            build_log_writer(&self.destination_folder, "download_log".to_string())?
-        );
-        Ok(())
-    }
+    // pub fn set_log_writer(&mut self) -> Result<()> {
+    //     self.log_writer = Some(
+    //         build_log_writer(&self.destination_folder, "download_log".to_string())?
+    //     );
+    //     Ok(())
+    // }
 
 
 }
@@ -298,14 +405,28 @@ pub fn validate_url(url: Option<String>) -> Result<Url> {
 }
 
 pub fn build_log_writer(folder: &PathBuf, filename: String) -> Result<csv::Writer<File>> {
+    //let time = chrono::Local::now().to_string();
     let mut filepath = folder.clone();
     filepath.push(&filename);
+    // filepath.push("_");
+    // filepath.push(&time);
     filepath.set_extension("csv");
-
+    // let mut log_file = std::fs::OpenOptions::new()
+    // .create_new(true)
+    // .append(true)
+    // .open(filepath)?;
     let writer = csv::Writer::from_path(filepath)?;
     Ok(writer)
 }
 
+#[derive(Debug)]
+pub enum AppStatus {
+    NotStarted,
+    Downloading,
+    FlushingLog,
+    Finished,
+
+}
     // pub async fn download_all(&self) -> Result<()> {
     //     let filenames = get_filenames_from_dataframe(&self.dataframe, "BRnum")?;
     //     let urls = get_urls_from_dataframe(&self.dataframe, "Pdf_URL")?;
@@ -441,3 +562,4 @@ pub fn build_log_writer(folder: &PathBuf, filename: String) -> Result<csv::Write
     //     Ok(())
     // }
 // }
+

@@ -13,7 +13,6 @@ mod app;
 use app::*;
 use color_eyre::install;
 use eframe::egui::{self, viewport};
-mod log_writer;
 // #[tokio::main]
 // async fn main() -> Result<()> {
 //     color_eyre::install()?;

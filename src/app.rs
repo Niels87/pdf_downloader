@@ -17,7 +17,6 @@ use crate::xlsx_reader::read_xlsx;
 use egui_file_dialog::*;
 use egui::ProgressBar;
 use std::sync::{Arc, Mutex};
-use crate::log_writer::*;
 
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
@@ -33,7 +32,8 @@ pub struct DownloaderApp {
     output_folder: Option<PathBuf>,
     //log_file: String,
     ui: AppUI,
-    active_downloads: Vec<JoinHandle<Result<String, Report>>>
+    download_state: AppStatus,
+    //active_downloads: Vec<JoinHandle<Result<String, Report>>>
 }
 
 // pub struct TextDisplays {
@@ -97,13 +97,14 @@ impl DownloaderApp {
             downloader: None,
             //text_inputs: TextDisplays::default(),
             dataframe: None,
-            url_columns: vec!["Pdf_URL".to_string()],
+            url_columns: vec!["Pdf_URL".to_string(), "Report Html Address".to_string()],
             file_name_column: Some("BRnum".to_string()),
-            xlsx_file: Some(PathBuf::from("C:/Users/KOM/dev/rust/pdf_downloader/data/test_file_short.xlsx")),
-            output_folder: Some(PathBuf::from("C:/Users/KOM/dev/rust/pdf_downloader/data/downloaded_files/")),
+            xlsx_file: None, //Some(PathBuf::from("C:/Users/KOM/dev/rust/pdf_downloader/data/test_file_short.xlsx")),
+            output_folder: None, //Some(PathBuf::from("C:/Users/KOM/dev/rust/pdf_downloader/data/downloaded_files/")),
             //log_file: "download_log.csv".to_string(),
             ui: AppUI::default(),
-            active_downloads: Vec::new(),
+            download_state: AppStatus::NotStarted,
+            //active_downloads: Vec::new(),
         };
         app
     }
@@ -130,7 +131,8 @@ impl DownloaderApp {
         
         match &mut self.downloader {
             Some(d) => {
-                let mut handles = d.download_all()?;
+                self.download_state = AppStatus::Downloading;
+                let handles = d.download_all()?;
             },
             None => ()
         }
@@ -146,8 +148,6 @@ impl eframe::App for DownloaderApp {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
-        // For inspiration and more examples, go to https://emilk.github.io/egui
         
         ctx.request_repaint();
 
@@ -173,115 +173,136 @@ impl eframe::App for DownloaderApp {
             });
 
         });
-
+        
         egui::SidePanel::right("right_panel")
             .min_width(320.0)
             .show(ctx, |ui| {
-                if let Some(downloader) = &self.downloader {
-                    ui.label("Downloading");
-                    if let std_Ok(p) = downloader.progress.lock() {
-                        for dl in p.iter() {
-                            ui.label(format!("{}", dl.0));
-                            ui.add(
-                                egui::ProgressBar::new(dl.1.downloaded as f32 / dl.1.size as f32)
-                                    .show_percentage()
-                                    .fill(Color32::DARK_GRAY)
-                            );
+                ui.separator();
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    if let Some(downloader) = &self.downloader {
+                        if let std_Ok(p) = downloader.progress.lock() {
+                            for dl in p.iter() {
+                                if !dl.1.finished {
+                                    ui.label(format!("{}", dl.0));
+                                    ui.add(
+                                    egui::ProgressBar::new(dl.1.downloaded as f32 / dl.1.size as f32)
+                                        .show_percentage()
+                                        .fill(Color32::DARK_GRAY)
+                                    );
+                                }
+                            }
                         }
                     }
-                    ctx.request_repaint();
-                }
+                })
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    if ui.button("Open file").clicked() {
+            
+            if ui.button("Open file").clicked() {
                         
-                        self.ui.choose_xlsx.select_file();
-                    }   
-                    if let Some(path) = self.ui.choose_xlsx.update(ctx).selected() {
-                        
-                        self.xlsx_file = Some(path.to_path_buf()); 
-                    }         
-                    
-                    ui.label(
-                        match &self.xlsx_file {
-                            Some(f) => format!("File: {}", f.display()),
-                            None => "No file loaded".to_string()
-                        }    
-                    );
-                });
-                ui.add_space(16.0);
-                ui.vertical(|ui| {
-                    if ui.button("Choose folder").clicked() {
-                        self.ui.choose_output_folder.select_directory()
-                    }
-                    if let Some(path) = self.ui.choose_output_folder.update(ctx).selected() {
-                        self.output_folder = Some(path.to_path_buf()); 
-                    }
-                    ui.label(
-                        match &self.output_folder {
-                            Some(f) => format!("Folder: {}", f.display()),
-                            None => "No folder chosen".to_string()
-                        }    
-                    );
-                })
-            });
-            if ui.button("Read xlsx").clicked() {
+                self.ui.choose_xlsx.select_file();
+            }   
+            if let Some(path) = self.ui.choose_xlsx.update(ctx).selected() {
+                
+                self.xlsx_file = Some(path.to_path_buf()); 
+            }         
+            
+            ui.label(
+                match &self.xlsx_file {
+                    Some(f) => format!("File: {}", f.display()),
+                    None => "No file loaded".to_string()
+                }    
+            );
+            if ui.button("Choose folder").clicked() {
+                self.ui.choose_output_folder.select_directory()
+            }
+            if let Some(path) = self.ui.choose_output_folder.update(ctx).selected() {
+                self.output_folder = Some(path.to_path_buf()); 
+            }
+            ui.label(
+                match &self.output_folder {
+                    Some(f) => format!("Folder: {}", f.display()),
+                    None => "No folder chosen".to_string()
+                }    
+            );
+            if ui.add_enabled(
+                self.xlsx_file.is_some(), 
+                egui::Button::new("Read xlsx")
+            ).clicked() {
                 self.on_read_xlsx_button_clicked()
             }
-            match &self.dataframe {
-                Some(df) => {
-                    ui.horizontal(|ui| {
-                        ui.menu_button("pdf_url_col", |menu_ui| {
-                            for cn in df.get_column_names() {
-                                if !self.url_columns.contains(&cn.to_string()) {
-                                    if menu_ui.button(cn).clicked() {
-                                        self.url_columns.push(cn.to_string());
-                                        menu_ui.close_menu();
-                                    }    
-                                }
-                            }
-                        });
-                        ui.menu_button("name col", |menu_ui| {
-                            for cn in df.get_column_names() {
-                                if !self.url_columns.contains(&cn.to_string()) {
-                                    if menu_ui.button(cn).clicked() {
-                                        self.file_name_column = Some(cn.to_string());
-                                        menu_ui.close_menu();
-                                    }    
-                                }
-                            }
-                        });
-                    });
-                    
-                    
-                    
+            if self.dataframe.is_some() {
+                ui.label("xlsx read!");
+            }
+            // match &self.dataframe {
+            //     Some(df) => {
+            //         ui.horizontal(|ui| {
+            //             ui.menu_button("Url columns", |menu_ui| {
+            //                 for cn in df.get_column_names() {
+            //                     if !self.url_columns.contains(&cn.to_string()) {
+            //                         if menu_ui.button(cn).clicked() {
+            //                             self.url_columns.push(cn.to_string());
+            //                             menu_ui.close_menu();
+            //                         }    
+            //                     }
+            //                 }
+            //             });
+            //             ui.menu_button("Name column", |menu_ui| {
+            //                 for cn in df.get_column_names() {
+            //                     if !self.url_columns.contains(&cn.to_string()) {
+            //                         if menu_ui.button(cn).clicked() {
+            //                             self.file_name_column = Some(cn.to_string());
+            //                             menu_ui.close_menu();
+            //                         }    
+            //                     }
+            //                 }
+            //             });
+            //         });
+            //     }
+            //     None => ()
+            // }
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label("Filename column");
+                    if let Some(file_name_column) = &self.file_name_column {
+                        ui.label(file_name_column);
+                    }
+                });
+                ui.vertical(|ui| {
+                    ui.label("Url columns:");
+                    for col in &self.url_columns {
+                        ui.label(col);
+                    }
+                });
+            });
+            
+            ui.horizontal(|ui| {
+                if ui.add_enabled(
+                    self.dataframe.is_some() && self.output_folder.is_some(),
+                    egui::Button::new("Build downloader")
+                ).clicked() {
+                    let _ = self.on_build_downloader_button_clicked();
                 }
-                None => ()
-            }
-            for col in &self.url_columns {
-                ui.label(col);
-            }
-            if let Some(file_name_column) = &self.file_name_column {
-                ui.label(file_name_column);
-            }
+                if self.downloader.is_some() {
+                    ui.label(format!(" downloader built"));    
+                }    
+            });
             
-            if ui.button("build downloader").clicked() {
-                let _ = self.on_build_downloader_button_clicked();
-            }
-            if let Some(d) = &self.downloader {
-                ui.label(format!("downloader built"));    
-            }
-            
-            
-            if ui.button("download all").clicked() {
+            if ui.add_enabled(
+                self.downloader.is_some(), 
+                egui::Button::new("Download all files")
+            ).clicked() {
                 let _ = self.on_download_all_button_clicked();
             }
-            
-            
 
+            // if let Some(downloader) = &self.downloader {
+            //     match downloader.status {
+            //         AppStatus::Downloading => { ui.label("Download in progress..."); },
+            //         //AppStatus::FlushingLog => { ui.label("Flushing log file to disk..."); }
+            //         AppStatus::Finished => { ui.label("Finished!"); },
+            //         _ => (),
+            //     }
+            // }
         });
     
         fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
@@ -299,3 +320,5 @@ impl eframe::App for DownloaderApp {
         }
     }
 }
+
+

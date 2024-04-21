@@ -13,11 +13,10 @@ pub fn read_xlsx(path: &Path) -> Result<DataFrame> {
         return Err(eyre!("Sheet not in workbook"));
     };
     let range = range_result?;
-    for c in range.rows().next().unwrap() {
-        println!("col: {:?}", c);    
+    // for c in range.rows().next().unwrap() {
+    //     println!("col: {:?}", c);    
         
-    }
-    
+    // }
     let columns = headers.into_iter().filter_map(
         |h| {
             let range_deserializer_result: Result<RangeDeserializer<'_, Data, [String;1]>, calamine::DeError> = 
