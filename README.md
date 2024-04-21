@@ -2,6 +2,7 @@
 Just download pdf_downloader.exe from the bin folder and run it.
 
 # How to
+From the application:
 1. Open the xlsx file.
 2. Choose an output folder.
 3. Read the xlsx file.
